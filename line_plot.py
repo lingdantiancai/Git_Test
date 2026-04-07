@@ -1,97 +1,127 @@
+import glob
 import numpy as np
+import pandas as pd
 import matplotlib as mpl
 
-# 须在 import pyplot / widgets 之前，否则负号易用 U+2212 且部分中文字体缺字形
-mpl.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
-mpl.rcParams["font.family"] = "sans-serif"
-mpl.rcParams["axes.unicode_minus"] = False
+# 配置中文字体
+mpl.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'DejaVu Sans']
+mpl.rcParams['axes.unicode_minus'] = False
 
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider
+from matplotlib.animation import FuncAnimation
+from matplotlib.widgets import Button, Slider
 
-# 手动改 y 轴范围；任一端可为 None（该端仍由数据自动留白）
-Y_MIN, Y_MAX = -0.5, 6
-# 平滑曲线采样点数（需 pip install scipy；未安装则回退为折线）
-SMOOTH_POINTS = 200
+# ========== 自动扫描 CSV 文件 ==========
+csv_files = glob.glob("*.csv")
+if not csv_files:
+    print("错误：当前目录没有找到 CSV 文件")
+    exit(1)
 
+def load_csv(filepath):
+    """读取 CSV 文件，返回时间和两列数据"""
+    df = pd.read_csv(filepath, header=1)  # 跳过两行表头
+    time = pd.to_numeric(df.iloc[:, 0], errors='coerce').dropna().values
+    col1 = pd.to_numeric(df.iloc[:, 1], errors='coerce').dropna().values
+    col2 = pd.to_numeric(df.iloc[:, 2], errors='coerce').dropna().values
+    col_names = df.columns[:3].tolist()
+    return time, col1, col2, col_names
 
-def _smooth_line_xy(x, y, n=SMOOTH_POINTS):
-    """过数据点的三次样条平滑；点数不足或缺 scipy 时退回折线。"""
-    xa = np.asarray(x, dtype=float)
-    ya = np.asarray(y, dtype=float)
-    if len(xa) < 2:
-        return xa, ya
-    if np.any(np.diff(xa) <= 0):
-        return xa, ya
-    try:
-        from scipy.interpolate import CubicSpline
+# 加载第一个 CSV
+time_data, disp_data, force_data, col_names = load_csv(csv_files[0])
+total_points = len(time_data)
 
-        if len(xa) < 4:
-            xs = np.linspace(xa[0], xa[-1], n)
-            return xs, np.interp(xs, xa, ya)
-        cs = CubicSpline(xa, ya)
-        xs = np.linspace(xa[0], xa[-1], n)
-        return xs, cs(xs)
-    except ImportError:
-        return xa, ya
+# 固定窗口宽度
+WINDOW_SIZE = 20
 
+# ========== 创建图形 ==========
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), height_ratios=[1, 1])
+fig.subplots_adjust(bottom=0.25, hspace=0.35)
 
-fig, ax = plt.subplots()
-# 四条滑块占底部约 0.28，主图从下沿 0.30 开始，避免滑块叠在主图里点不到
-fig.subplots_adjust(bottom=0.30)
+# 初始空数据
+line1, = ax1.plot([], [], 'b-', linewidth=1.5, marker='o', markersize=3)
+line2, = ax2.plot([], [], 'r-', linewidth=1.5, marker='o', markersize=3)
 
-x = [0, 1, 2, 3, 4]
-y = [0, 5, 1, 3, 2]
-xs, ys = _smooth_line_xy(x, y)
-ax.plot(xs, ys, "-", linewidth=1.8)
-ax.plot(x, y, "o", markersize=6, zorder=5)
-ax.set_xlabel("x")
-ax.set_ylabel("y")
-ax.set_title("平滑曲线（过数据点）")
+ax1.set_ylabel(col_names[1], fontsize=12)
+ax1.set_title(f"动态加载: {csv_files[0]} (窗口大小: {WINDOW_SIZE})", fontsize=14)
+ax1.grid(True, alpha=0.3)
 
-y_lo, y_hi = min(y), max(y)
-pad = (y_hi - y_lo) * 0.1 or 1.0
-auto_lo, auto_hi = y_lo - pad, y_hi + pad
-init_lo = Y_MIN if Y_MIN is not None else auto_lo
-init_hi = Y_MAX if Y_MAX is not None else auto_hi
+ax2.set_ylabel(col_names[2], fontsize=12)
+ax2.set_xlabel(col_names[0], fontsize=12)
+ax2.grid(True, alpha=0.3)
 
-x_lo, x_hi = min(x), max(x)
-xpad = (x_hi - x_lo) * 0.1 or 1.0
-x_init_lo, x_init_hi = x_lo - xpad, x_hi + xpad
+# ========== 动画控制变量 ==========
+current_frame = [0]  # 当前帧（已加载的数据点数）
+is_playing = [True]
 
-# 自下而上：Y 上限、Y 下限、x 下限、x 上限（均在主图下方）
-ax_y_max = fig.add_axes([0.15, 0.07, 0.7, 0.03])
-ax_y_min = fig.add_axes([0.15, 0.12, 0.7, 0.03])
-ax_x_min = fig.add_axes([0.15, 0.17, 0.7, 0.03])
-ax_x_max = fig.add_axes([0.15, 0.22, 0.7, 0.03])
+# ========== 速度滑块 ==========
+ax_speed = fig.add_axes([0.15, 0.10, 0.5, 0.03])
+slider_speed = Slider(ax_speed, '速度 (帧/秒)', 1, 100, valinit=30, valstep=1)
 
-y_slider_lo = Slider(ax_y_min, "Y 下限", -10, 10, valinit=init_lo, valstep=0.1)
-y_slider_hi = Slider(ax_y_max, "Y 上限", -10, 10, valinit=init_hi, valstep=0.1)
-x_slider_lo = Slider(ax_x_min, "x 下限", -50, 50, valinit=x_init_lo, valstep=0.1)
-x_slider_hi = Slider(ax_x_max, "x 上限", -50, 50, valinit=x_init_hi, valstep=0.1)
+# ========== 播放/暂停按钮 ==========
+ax_pause = fig.add_axes([0.70, 0.09, 0.1, 0.04])
+btn_pause = Button(ax_pause, '暂停')
 
+def update(frame):
+    """动画更新函数"""
+    if not is_playing[0]:
+        return line1, line2
+    
+    current_frame[0] = frame
+    
+    # 当前窗口：从 0 到 frame，但最多显示 WINDOW_SIZE 个点
+    end_idx = min(frame, total_points)
+    start_idx = max(0, end_idx - WINDOW_SIZE)
+    
+    # 更新位移图
+    x1 = time_data[start_idx:end_idx]
+    y1 = disp_data[start_idx:end_idx]
+    line1.set_data(x1, y1)
+    
+    # 更新力图
+    y2 = force_data[start_idx:end_idx]
+    line2.set_data(x1, y2)
+    
+    # 自动调整坐标轴
+    if len(x1) > 0:
+        ax1.set_xlim(x1.min(), x1.max())
+        ax2.set_xlim(x1.min(), x1.max())
+        
+        y1_lo, y1_hi = y1.min(), y1.max()
+        pad1 = (y1_hi - y1_lo) * 0.1 if y1_hi > y1_lo else 0.1
+        ax1.set_ylim(y1_lo - pad1, y1_hi + pad1)
+        
+        y2_lo, y2_hi = y2.min(), y2.max()
+        pad2 = (y2_hi - y2_lo) * 0.1 if y2_hi > y2_lo else 0.1
+        ax2.set_ylim(y2_lo - pad2, y2_hi + pad2)
+    
+    ax1.set_title(f"动态加载: {csv_files[0]} - 已加载: {end_idx}/{total_points} 点", fontsize=14)
+    
+    return line1, line2
 
-def on_y_slider(_):
-    lo, hi = sorted((y_slider_lo.val, y_slider_hi.val))
-    if hi - lo < 1e-6:
-        hi = lo + 0.01
-    ax.set_ylim(lo, hi)
+def on_pause_clicked(event):
+    """暂停/播放按钮回调"""
+    is_playing[0] = not is_playing[0]
+    btn_pause.label.set_text('继续' if not is_playing[0] else '暂停')
     fig.canvas.draw_idle()
 
+btn_pause.on_clicked(on_pause_clicked)
 
-def on_x_slider(_):
-    xlo, xhi = sorted((x_slider_lo.val, x_slider_hi.val))
-    if xhi - xlo < 1e-6:
-        xhi = xlo + 0.01
-    ax.set_xlim(xlo, xhi)
-    fig.canvas.draw_idle()
+# 创建动画
+def get_interval():
+    return 1000.0 / slider_speed.val
 
+ani = FuncAnimation(
+    fig, update,
+    frames=range(1, total_points + 1),
+    interval=get_interval(),
+    blit=False,
+    repeat=False
+)
 
-y_slider_lo.on_changed(on_y_slider)
-y_slider_hi.on_changed(on_y_slider)
-x_slider_lo.on_changed(on_x_slider)
-x_slider_hi.on_changed(on_x_slider)
-ax.set_ylim(init_lo, init_hi)
-ax.set_xlim(x_init_lo, x_init_hi)
+# 速度变化时更新间隔
+def on_speed_change(val):
+    ani.event_source.interval = get_interval()
+
+slider_speed.on_changed(on_speed_change)
 
 plt.show()
