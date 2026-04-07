@@ -1,175 +1,126 @@
-import os
 import glob
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider, RadioButtons
-from matplotlib.font_manager import FontProperties
+from matplotlib.animation import FuncAnimation
+from matplotlib.widgets import Button, Slider
 
-# 配置中文字体，避免字体警告
+# 配置中文字体
 import matplotlib as mpl
 mpl.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'DejaVu Sans']
 mpl.rcParams['axes.unicode_minus'] = False
 
-# 设置默认字体
-plt.rcParams['font.family'] = 'Microsoft YaHei'
-
 # ========== 自动扫描 CSV 文件 ==========
 csv_files = glob.glob("*.csv")
 if not csv_files:
-    print("警告：当前目录没有找到 CSV 文件，将使用示例数据")
-    csv_files = []
+    print("错误：当前目录没有找到 CSV 文件")
+    exit(1)
 
 def load_csv(filepath):
-    """读取 CSV 文件，返回第一列和第二列数据"""
-    df = pd.read_csv(filepath)
-    # 跳过表头，直接取数值列
-    x = pd.to_numeric(df.iloc[:, 0], errors='coerce').dropna().values
-    y = pd.to_numeric(df.iloc[:, 1], errors='coerce').dropna().values
-    return x, y, df.columns.tolist()
+    """读取 CSV 文件，返回时间和两列数据"""
+    df = pd.read_csv(filepath, header=1)  # 跳过两行表头
+    time = pd.to_numeric(df.iloc[:, 0], errors='coerce').dropna().values
+    col1 = pd.to_numeric(df.iloc[:, 1], errors='coerce').dropna().values
+    col2 = pd.to_numeric(df.iloc[:, 2], errors='coerce').dropna().values
+    col_names = df.columns[:3].tolist()
+    return time, col1, col2, col_names
 
-# 如果有 CSV 文件，默认加载第一个
-if csv_files:
-    x_data, y_data, col_names = load_csv(csv_files[0])
-else:
-    # 备用示例数据
-    x_data = np.arange(0, 21)
-    y_data = np.array([0, 5, 1, 3, 2, 6, 4, 7, 3, 8, 2, 5, 9, 1, 6, 4, 7, 3, 8, 5, 2])
-    col_names = ["x", "y"]
+# 加载第一个 CSV
+time_data, disp_data, force_data, col_names = load_csv(csv_files[0])
+total_points = len(time_data)
+
+# 固定窗口宽度
+WINDOW_SIZE = 20
 
 # ========== 创建图形 ==========
-fig = plt.figure(figsize=(12, 9))
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10), height_ratios=[1, 1])
+fig.subplots_adjust(bottom=0.25, hspace=0.35)
 
-# ========== 2D 折线图子图 ==========
-ax = fig.add_subplot(1, 1, 1)
-fig.subplots_adjust(bottom=0.30, left=0.15, right=0.75)
+# 初始空数据
+line1, = ax1.plot([], [], 'b-', linewidth=1.5, marker='o', markersize=3)
+line2, = ax2.plot([], [], 'r-', linewidth=1.5, marker='o', markersize=3)
 
-# 滑窗参数
-window_size = min(20, len(x_data))
-start_idx = 0
+ax1.set_ylabel(col_names[1], fontsize=12)
+ax1.set_title(f"动态加载: {csv_files[0]} (窗口大小: {WINDOW_SIZE})", fontsize=14)
+ax1.grid(True, alpha=0.3)
 
-# 初始窗口数据
-x_window = x_data[start_idx:start_idx + window_size]
-y_window = y_data[start_idx:start_idx + window_size]
+ax2.set_ylabel(col_names[2], fontsize=12)
+ax2.set_xlabel(col_names[0], fontsize=12)
+ax2.grid(True, alpha=0.3)
 
-line, = ax.plot(x_window, y_window, 'o-', linewidth=2, markersize=5)
-ax.set_xlabel(col_names[0], fontsize=12)
-ax.set_ylabel(col_names[1], fontsize=12)
-ax.set_title(f"CSV 数据 - 滑窗显示 (窗口大小: {window_size})", fontsize=14)
+# ========== 动画控制变量 ==========
+current_frame = [0]  # 当前帧（已加载的数据点数）
+is_playing = [True]
 
-# 自动计算合理的坐标轴范围
-def calc_axis_limits(data, padding=0.1):
-    lo, hi = data.min(), data.max()
-    pad = (hi - lo) * padding if hi > lo else 1.0
-    return lo - pad, hi + pad
+# ========== 速度滑块 ==========
+ax_speed = fig.add_axes([0.15, 0.10, 0.5, 0.03])
+slider_speed = Slider(ax_speed, '速度 (帧/秒)', 1, 100, valinit=30, valstep=1)
 
-x_lo, x_hi = calc_axis_limits(x_data)
-y_lo, y_hi = calc_axis_limits(y_data)
-ax.set_xlim(x_lo, x_hi)
-ax.set_ylim(y_lo, y_hi)
+# ========== 播放/暂停按钮 ==========
+ax_pause = fig.add_axes([0.70, 0.09, 0.1, 0.04])
+btn_pause = Button(ax_pause, '暂停')
 
-# 添加网格，提升可读性
-ax.grid(True, alpha=0.3)
-
-# ========== 控件区域布局 ==========
-# CSV 文件选择器（右上角）
-ax_radio = fig.add_axes([0.80, 0.50, 0.18, 0.20])
-if csv_files:
-    radio = RadioButtons(ax_radio, csv_files, active=0)
-else:
-    radio = None
-
-# 滑窗控制滑块
-ax_window = fig.add_axes([0.15, 0.18, 0.55, 0.03])
-ax_start = fig.add_axes([0.15, 0.12, 0.55, 0.03])
-
-# 坐标轴控制滑块
-ax_y_max = fig.add_axes([0.15, 0.06, 0.55, 0.03])
-ax_y_min = fig.add_axes([0.15, 0.00, 0.55, 0.03])
-
-# 创建滑块
-slider_window = Slider(ax_window, '窗口大小', 5, len(x_data), valinit=window_size, valstep=1)
-slider_start = Slider(ax_start, '起始位置', 0, len(x_data) - 5, valinit=0, valstep=1)
-
-y_init_lo, y_init_hi = calc_axis_limits(y_window)
-slider_y_min = Slider(ax_y_min, "Y 下限", y_lo, y_hi, valinit=y_init_lo, valstep=0.1)
-slider_y_max = Slider(ax_y_max, "Y 上限", y_lo, y_hi, valinit=y_init_hi, valstep=0.1)
-
-# ========== 回调函数 ==========
-def update_window(_):
-    """更新滑窗显示"""
-    global window_size, start_idx
-    window_size = int(slider_window.val)
-    start_idx = int(slider_start.val)
+def update(frame):
+    """动画更新函数"""
+    if not is_playing[0]:
+        return line1, line2
     
-    # 确保窗口不超出数据范围
-    if start_idx + window_size > len(x_data):
-        start_idx = len(x_data) - window_size
-        slider_start.set_val(start_idx)
+    current_frame[0] = frame
     
-    x_win = x_data[start_idx:start_idx + window_size]
-    y_win = y_data[start_idx:start_idx + window_size]
+    # 当前窗口：从 0 到 frame，但最多显示 WINDOW_SIZE 个点
+    end_idx = min(frame, total_points)
+    start_idx = max(0, end_idx - WINDOW_SIZE)
     
-    line.set_xdata(x_win)
-    line.set_ydata(y_win)
+    # 更新位移图
+    x1 = time_data[start_idx:end_idx]
+    y1 = disp_data[start_idx:end_idx]
+    line1.set_data(x1, y1)
+    
+    # 更新力图
+    y2 = force_data[start_idx:end_idx]
+    line2.set_data(x1, y2)
     
     # 自动调整坐标轴
-    x_win_lo, x_win_hi = calc_axis_limits(x_win)
-    y_win_lo, y_win_hi = calc_axis_limits(y_win)
+    if len(x1) > 0:
+        ax1.set_xlim(x1.min(), x1.max())
+        ax2.set_xlim(x1.min(), x1.max())
+        
+        y1_lo, y1_hi = y1.min(), y1.max()
+        pad1 = (y1_hi - y1_lo) * 0.1 if y1_hi > y1_lo else 0.1
+        ax1.set_ylim(y1_lo - pad1, y1_hi + pad1)
+        
+        y2_lo, y2_hi = y2.min(), y2.max()
+        pad2 = (y2_hi - y2_lo) * 0.1 if y2_hi > y2_lo else 0.1
+        ax2.set_ylim(y2_lo - pad2, y2_hi + pad2)
     
-    ax.set_xlim(x_win_lo, x_win_hi)
-    ax.set_ylim(y_win_lo, y_win_hi)
+    ax1.set_title(f"动态加载: {csv_files[0]} - 已加载: {end_idx}/{total_points} 点", fontsize=14)
     
-    slider_y_min.valmin = y_lo
-    slider_y_min.valmax = y_hi
-    slider_y_min.set_val(y_win_lo)
-    
-    slider_y_max.valmin = y_lo
-    slider_y_max.valmax = y_hi
-    slider_y_max.set_val(y_win_hi)
-    
-    ax.set_title(f"CSV 数据 - 滑窗显示 (窗口: {window_size}, 起始: {start_idx})", fontsize=14)
+    return line1, line2
+
+def on_pause_clicked(event):
+    """暂停/播放按钮回调"""
+    is_playing[0] = not is_playing[0]
+    btn_pause.label.set_text('继续' if not is_playing[0] else '暂停')
     fig.canvas.draw_idle()
 
-def on_y_slider(_):
-    lo, hi = sorted((slider_y_min.val, slider_y_max.val))
-    if hi - lo < 1e-6:
-        hi = lo + 0.01
-    ax.set_ylim(lo, hi)
-    fig.canvas.draw_idle()
+btn_pause.on_clicked(on_pause_clicked)
 
-def on_csv_selected(label):
-    """切换 CSV 文件"""
-    global x_data, y_data, col_names
-    x_data, y_data, col_names = load_csv(label)
-    
-    # 重置滑块范围
-    slider_window.valmax = len(x_data)
-    slider_window.set_val(min(20, len(x_data)))
-    
-    slider_start.valmax = max(0, len(x_data) - 5)
-    slider_start.set_val(0)
-    
-    # 重新计算坐标轴范围
-    global x_lo, x_hi, y_lo, y_hi
-    x_lo, x_hi = calc_axis_limits(x_data)
-    y_lo, y_hi = calc_axis_limits(y_data)
-    
-    update_window(None)
-    ax.set_xlabel(col_names[0], fontsize=12)
-    ax.set_ylabel(col_names[1], fontsize=12)
-    fig.canvas.draw_idle()
+# 创建动画
+def get_interval():
+    return 1000.0 / slider_speed.val
 
-# 绑定回调
-slider_window.on_changed(update_window)
-slider_start.on_changed(update_window)
-slider_y_min.on_changed(on_y_slider)
-slider_y_max.on_changed(on_y_slider)
+ani = FuncAnimation(
+    fig, update,
+    frames=range(1, total_points + 1),
+    interval=get_interval(),
+    blit=False,
+    repeat=False
+)
 
-if radio is not None:
-    radio.on_clicked(on_csv_selected)
+# 速度变化时更新间隔
+def on_speed_change(val):
+    ani.event_source.interval = get_interval()
 
-# 初始绘制
-update_window(None)
+slider_speed.on_changed(on_speed_change)
 
 plt.show()
