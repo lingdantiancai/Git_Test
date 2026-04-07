@@ -1,11 +1,40 @@
+import numpy as np
+import matplotlib as mpl
+
+# 须在 import pyplot / widgets 之前，否则负号易用 U+2212 且部分中文字体缺字形
+mpl.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
+mpl.rcParams["font.family"] = "sans-serif"
+mpl.rcParams["axes.unicode_minus"] = False
+
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 
 # 手动改 y 轴范围；任一端可为 None（该端仍由数据自动留白）
 Y_MIN, Y_MAX = -0.5, 6
+# 平滑曲线采样点数（需 pip install scipy；未安装则回退为折线）
+SMOOTH_POINTS = 200
 
-plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "DejaVu Sans"]
-plt.rcParams["axes.unicode_minus"] = False
+
+def _smooth_line_xy(x, y, n=SMOOTH_POINTS):
+    """过数据点的三次样条平滑；点数不足或缺 scipy 时退回折线。"""
+    xa = np.asarray(x, dtype=float)
+    ya = np.asarray(y, dtype=float)
+    if len(xa) < 2:
+        return xa, ya
+    if np.any(np.diff(xa) <= 0):
+        return xa, ya
+    try:
+        from scipy.interpolate import CubicSpline
+
+        if len(xa) < 4:
+            xs = np.linspace(xa[0], xa[-1], n)
+            return xs, np.interp(xs, xa, ya)
+        cs = CubicSpline(xa, ya)
+        xs = np.linspace(xa[0], xa[-1], n)
+        return xs, cs(xs)
+    except ImportError:
+        return xa, ya
+
 
 fig, ax = plt.subplots()
 # 四条滑块占底部约 0.28，主图从下沿 0.30 开始，避免滑块叠在主图里点不到
@@ -13,10 +42,12 @@ fig.subplots_adjust(bottom=0.30)
 
 x = [0, 1, 2, 3, 4]
 y = [0, 5, 1, 3, 2]
-ax.plot(x, y)
+xs, ys = _smooth_line_xy(x, y)
+ax.plot(xs, ys, "-", linewidth=1.8)
+ax.plot(x, y, "o", markersize=6, zorder=5)
 ax.set_xlabel("x")
 ax.set_ylabel("y")
-ax.set_title("折线图")
+ax.set_title("平滑曲线（过数据点）")
 
 y_lo, y_hi = min(y), max(y)
 pad = (y_hi - y_lo) * 0.1 or 1.0

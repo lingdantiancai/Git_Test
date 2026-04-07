@@ -1,0 +1,27 @@
+---
+description: 新功能先建分支、本地测通后再合并到 main 的 Git 工作流
+alwaysApply: true
+---
+
+# Git：先分支、再合并
+
+## 开始新任务时（新功能 / 较大改动）
+
+1. **不要直接在 `main` 上改**。先基于最新 `main`（或团队约定的 `develop`）建分支：
+   - `git fetch`（若有远程）
+   - `git switch main` → `git pull`
+   - `git switch -c feature/<简短说明>`（或 `fix/<说明>`）
+2. **在本分支上**改代码、本地运行与自测，确认无误。
+3. **提交到本分支**：`git add` → `git commit -m "feat: ..."`（信息写清楚）。
+4. **再合并进 `main`**（二选一，按团队习惯）：
+   - 本地：`git switch main` → `git merge feature/<简短说明>` → `git push`
+   - 或：推分支后走 Pull Request，审查通过再合 `main`。
+
+## Agent 协作时的期望
+
+- 在准备做**实质性修改**前，先确认当前分支；若在 `main`，应提示用户或执行 `git switch -c feature/...`（需用户同意时再改远程）。
+- 合并前不擅自 `push --force` 到 `main`。
+
+## 例外
+
+- 仅改文档、极小 typo、或用户明确要求「直接在 main 提交」时，可跳过建分支。
