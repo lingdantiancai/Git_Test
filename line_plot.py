@@ -4,9 +4,15 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider, RadioButtons
+from matplotlib.font_manager import FontProperties
 
-plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "DejaVu Sans"]
-plt.rcParams["axes.unicode_minus"] = False
+# 配置中文字体，避免字体警告
+import matplotlib as mpl
+mpl.rcParams['font.sans-serif'] = ['Microsoft YaHei', 'SimHei', 'DejaVu Sans']
+mpl.rcParams['axes.unicode_minus'] = False
+
+# 设置默认字体
+plt.rcParams['font.family'] = 'Microsoft YaHei'
 
 # ========== 自动扫描 CSV 文件 ==========
 csv_files = glob.glob("*.csv")
@@ -32,23 +38,11 @@ else:
     col_names = ["x", "y"]
 
 # ========== 创建图形 ==========
-fig = plt.figure(figsize=(14, 10))
-
-# ========== 3D 螺旋子图 ==========
-ax_3d = fig.add_subplot(3, 1, 1, projection='3d')
-t = np.linspace(0, 20 * np.pi, 200)
-x_3d = np.cos(t)
-y_3d = np.sin(t)
-z_3d = t
-ax_3d.plot(x_3d, y_3d, z_3d, color='blue', linewidth=2)
-ax_3d.set_xlabel("X")
-ax_3d.set_ylabel("Y")
-ax_3d.set_zlabel("Z")
-ax_3d.set_title("3D 螺旋线")
+fig = plt.figure(figsize=(12, 9))
 
 # ========== 2D 折线图子图 ==========
-ax = fig.add_subplot(3, 1, 2)
-fig.subplots_adjust(bottom=0.35)
+ax = fig.add_subplot(1, 1, 1)
+fig.subplots_adjust(bottom=0.30, left=0.15, right=0.75)
 
 # 滑窗参数
 window_size = min(20, len(x_data))
@@ -58,10 +52,10 @@ start_idx = 0
 x_window = x_data[start_idx:start_idx + window_size]
 y_window = y_data[start_idx:start_idx + window_size]
 
-line, = ax.plot(x_window, y_window, 'o-', linewidth=2, markersize=4)
-ax.set_xlabel(col_names[0])
-ax.set_ylabel(col_names[1])
-ax.set_title(f"CSV 数据 - 滑窗显示 (窗口大小: {window_size})")
+line, = ax.plot(x_window, y_window, 'o-', linewidth=2, markersize=5)
+ax.set_xlabel(col_names[0], fontsize=12)
+ax.set_ylabel(col_names[1], fontsize=12)
+ax.set_title(f"CSV 数据 - 滑窗显示 (窗口大小: {window_size})", fontsize=14)
 
 # 自动计算合理的坐标轴范围
 def calc_axis_limits(data, padding=0.1):
@@ -74,22 +68,24 @@ y_lo, y_hi = calc_axis_limits(y_data)
 ax.set_xlim(x_lo, x_hi)
 ax.set_ylim(y_lo, y_hi)
 
+# 添加网格，提升可读性
+ax.grid(True, alpha=0.3)
+
 # ========== 控件区域布局 ==========
 # CSV 文件选择器（右上角）
-ax_radio = fig.add_axes([0.75, 0.65, 0.2, 0.15])
+ax_radio = fig.add_axes([0.80, 0.50, 0.18, 0.20])
 if csv_files:
     radio = RadioButtons(ax_radio, csv_files, active=0)
 else:
     radio = None
 
 # 滑窗控制滑块
-ax_window = fig.add_axes([0.15, 0.25, 0.5, 0.03])
-ax_start = fig.add_axes([0.15, 0.20, 0.5, 0.03])
+ax_window = fig.add_axes([0.15, 0.18, 0.55, 0.03])
+ax_start = fig.add_axes([0.15, 0.12, 0.55, 0.03])
 
 # 坐标轴控制滑块
-ax_y_max = fig.add_axes([0.15, 0.12, 0.5, 0.03])
-ax_y_min = fig.add_axes([0.15, 0.07, 0.5, 0.03])
-ax_x_min = fig.add_axes([0.15, 0.02, 0.5, 0.03])
+ax_y_max = fig.add_axes([0.15, 0.06, 0.55, 0.03])
+ax_y_min = fig.add_axes([0.15, 0.00, 0.55, 0.03])
 
 # 创建滑块
 slider_window = Slider(ax_window, '窗口大小', 5, len(x_data), valinit=window_size, valstep=1)
@@ -98,9 +94,6 @@ slider_start = Slider(ax_start, '起始位置', 0, len(x_data) - 5, valinit=0, v
 y_init_lo, y_init_hi = calc_axis_limits(y_window)
 slider_y_min = Slider(ax_y_min, "Y 下限", y_lo, y_hi, valinit=y_init_lo, valstep=0.1)
 slider_y_max = Slider(ax_y_max, "Y 上限", y_lo, y_hi, valinit=y_init_hi, valstep=0.1)
-
-x_init_lo, x_init_hi = calc_axis_limits(x_window)
-slider_x_min = Slider(ax_x_min, "X 下限", x_lo, x_hi, valinit=x_init_lo, valstep=0.1)
 
 # ========== 回调函数 ==========
 def update_window(_):
@@ -127,10 +120,6 @@ def update_window(_):
     ax.set_xlim(x_win_lo, x_win_hi)
     ax.set_ylim(y_win_lo, y_win_hi)
     
-    slider_x_min.valmin = x_lo
-    slider_x_min.valmax = x_hi
-    slider_x_min.set_val(x_win_lo)
-    
     slider_y_min.valmin = y_lo
     slider_y_min.valmax = y_hi
     slider_y_min.set_val(y_win_lo)
@@ -139,7 +128,7 @@ def update_window(_):
     slider_y_max.valmax = y_hi
     slider_y_max.set_val(y_win_hi)
     
-    ax.set_title(f"CSV 数据 - 滑窗显示 (窗口: {window_size}, 起始: {start_idx})")
+    ax.set_title(f"CSV 数据 - 滑窗显示 (窗口: {window_size}, 起始: {start_idx})", fontsize=14)
     fig.canvas.draw_idle()
 
 def on_y_slider(_):
@@ -147,14 +136,6 @@ def on_y_slider(_):
     if hi - lo < 1e-6:
         hi = lo + 0.01
     ax.set_ylim(lo, hi)
-    fig.canvas.draw_idle()
-
-def on_x_slider(_):
-    xlo = slider_x_min.val
-    xhi = x_data.max()
-    if xhi - xlo < 1e-6:
-        xhi = xlo + 0.01
-    ax.set_xlim(xlo, xhi)
     fig.canvas.draw_idle()
 
 def on_csv_selected(label):
@@ -166,7 +147,7 @@ def on_csv_selected(label):
     slider_window.valmax = len(x_data)
     slider_window.set_val(min(20, len(x_data)))
     
-    slider_start.valmax = len(x_data) - 5
+    slider_start.valmax = max(0, len(x_data) - 5)
     slider_start.set_val(0)
     
     # 重新计算坐标轴范围
@@ -175,8 +156,8 @@ def on_csv_selected(label):
     y_lo, y_hi = calc_axis_limits(y_data)
     
     update_window(None)
-    ax.set_xlabel(col_names[0])
-    ax.set_ylabel(col_names[1])
+    ax.set_xlabel(col_names[0], fontsize=12)
+    ax.set_ylabel(col_names[1], fontsize=12)
     fig.canvas.draw_idle()
 
 # 绑定回调
@@ -184,7 +165,6 @@ slider_window.on_changed(update_window)
 slider_start.on_changed(update_window)
 slider_y_min.on_changed(on_y_slider)
 slider_y_max.on_changed(on_y_slider)
-slider_x_min.on_changed(on_x_slider)
 
 if radio is not None:
     radio.on_clicked(on_csv_selected)
