@@ -1,3 +1,4 @@
+import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 
@@ -7,7 +8,22 @@ Y_MIN, Y_MAX = -0.5, 6
 plt.rcParams["font.sans-serif"] = ["SimHei", "Microsoft YaHei", "DejaVu Sans"]
 plt.rcParams["axes.unicode_minus"] = False
 
-fig, ax = plt.subplots()
+fig = plt.figure(figsize=(12, 8))
+
+# ========== 3D 螺旋子图 ==========
+ax_3d = fig.add_subplot(2, 1, 1, projection='3d')
+t = np.linspace(0, 20 * np.pi, 200)
+x_3d = np.cos(t)
+y_3d = np.sin(t)
+z_3d = t
+ax_3d.plot(x_3d, y_3d, z_3d, color='blue', linewidth=2)
+ax_3d.set_xlabel("X")
+ax_3d.set_ylabel("Y")
+ax_3d.set_zlabel("Z")
+ax_3d.set_title("3D 螺旋线")
+
+# ========== 2D 折线图子图 ==========
+ax = fig.add_subplot(2, 1, 2)
 # 四条滑块占底部约 0.28，主图从下沿 0.30 开始，避免滑块叠在主图里点不到
 fig.subplots_adjust(bottom=0.30)
 
