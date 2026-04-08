@@ -14,14 +14,12 @@ mpl.rcParams["axes.unicode_minus"] = False
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.animation import FuncAnimation
 from matplotlib.widgets import Button, Slider
 
 from agent_b_signal import process_signal
 
 # ---------- 常量 ----------
-WINDOW_SIZE = 20
-DEFAULT_SPEED = 30  # 帧/秒
+DEFAULT_SPEED = 30  # 点/秒
 
 
 def load_csv(filepath: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
@@ -59,15 +57,15 @@ class ForceDisplacementViewer:
         force: np.ndarray,
         col_names: list[str],
         filename: str,
-        window_size: int = WINDOW_SIZE,
     ) -> None:
         self.disp = disp
         self.force = force
         self.col_names = col_names
         self.filename = filename
-        self.window_size = window_size
         self.total_points = len(disp)
-        self.is_playing = True
+        self.current_idx = 0
+        self.is_playing = False
+        self.speed = DEFAULT_SPEED  # 点/秒
 
         # 固定坐标轴范围（基于完整数据）
         self.x_min, self.x_max = disp.min(), disp.max()
@@ -81,13 +79,11 @@ class ForceDisplacementViewer:
         self.fig, self.ax = plt.subplots(figsize=(10, 8))
         self.fig.subplots_adjust(bottom=0.25)
 
-        (self.line,) = self.ax.plot([], [], "b-", linewidth=1.5, marker="o", markersize=3)
+        (self.line,) = self.ax.plot([], [], "b-", linewidth=1.5)
 
         self.ax.set_xlabel(f"{self.col_names[1]} (位移)", fontsize=13)
         self.ax.set_ylabel(f"{self.col_names[2]} (力)", fontsize=13)
-        self.ax.set_title(
-            f"力-位移曲线: {self.filename} (窗口大小: {self.window_size})", fontsize=14
-        )
+        self.ax.set_title(f"力-位移曲线: {self.filename}", fontsize=14)
         self.ax.grid(True, alpha=0.3)
 
         # 固定坐标轴范围
@@ -96,61 +92,69 @@ class ForceDisplacementViewer:
         self.ax.set_xlim(self.x_min - pad_x, self.x_max + pad_x)
         self.ax.set_ylim(self.y_min - pad_y, self.y_max + pad_y)
 
-        # 速度滑块
+        # 速度滑块：每秒读取的点数
         ax_speed = self.fig.add_axes([0.15, 0.10, 0.5, 0.03])
         self.slider_speed = Slider(
-            ax_speed, "速度 (帧/秒)", 1, 100, valinit=DEFAULT_SPEED, valstep=1
+            ax_speed, "速度 (点/秒)", 1, 500, valinit=DEFAULT_SPEED, valstep=1
         )
+        self.slider_speed.on_changed(self._on_speed_changed)
 
         # 播放/暂停按钮
         ax_pause = self.fig.add_axes([0.70, 0.09, 0.1, 0.04])
-        self.btn_pause = Button(ax_pause, "暂停")
+        self.btn_pause = Button(ax_pause, "播放")
         self.btn_pause.on_clicked(self._on_pause_clicked)
 
     # ---- 回调 ----
 
     def _on_pause_clicked(self, _event) -> None:
+        if not self.is_playing and self.current_idx >= self.total_points:
+            # 播放完毕后点击，从头开始
+            self.current_idx = 0
         self.is_playing = not self.is_playing
-        self.btn_pause.label.set_text("继续" if not self.is_playing else "暂停")
+        self.btn_pause.label.set_text("暂停" if self.is_playing else "继续")
         self.fig.canvas.draw_idle()
 
-    def _get_interval(self) -> float:
-        return 1000.0 / self.slider_speed.val
+    def _on_speed_changed(self, val: float) -> None:
+        self.speed = int(val)
 
     # ---- 动画 ----
 
-    def _update(self, frame: int) -> tuple:
-        if not self.is_playing:
-            return (self.line,)
+    def _tick(self) -> None:
+        """定时器回调：每帧推进若干个数据点。"""
+        if not self.is_playing or self.current_idx >= self.total_points:
+            if self.current_idx >= self.total_points:
+                self.is_playing = False
+                self.btn_pause.label.set_text("重播")
+                self.fig.canvas.draw_idle()
+            return
 
-        end_idx = frame + 1
+        # 每帧推进的步数 = 速度(点/秒) / 定时器频率(帧/秒)
+        steps = max(1, round(self.speed / self.timer_interval_hz))
+        self.current_idx = min(self.current_idx + steps, self.total_points)
 
-        # 从起点绘制到当前帧，逐步画出完整曲线
-        x = self.disp[:end_idx]
-        y = self.force[:end_idx]
-
+        x = self.disp[: self.current_idx]
+        y = self.force[: self.current_idx]
         self.line.set_data(x, y)
 
         self.ax.set_title(
-            f"力-位移曲线: {self.filename} - 已加载: {end_idx}/{self.total_points} 点",
+            f"力-位移曲线: {self.filename} - {self.current_idx}/{self.total_points} 点",
             fontsize=14,
         )
-        return (self.line,)
+        self.fig.canvas.draw_idle()
 
     def run(self) -> None:
-        """启动动画并显示窗口。"""
-        self.ani = FuncAnimation(
-            self.fig,
-            self._update,
-            frames=self.total_points,
-            interval=self._get_interval(),
-            blit=False,
-            repeat=False,
-            cache_frame_data=False,
-        )
-        self.slider_speed.on_changed(
-            lambda _val: setattr(self.ani.event_source, "interval", self._get_interval())
-        )
+        """启动定时器并显示窗口。"""
+        # 定时器以 ~30fps 刷新画面，每次推进的点数由速度滑块决定
+        self.timer_interval_hz = 30
+        interval_ms = int(1000 / self.timer_interval_hz)
+        self.timer = self.fig.canvas.new_timer(interval=interval_ms)
+        self.timer.add_callback(self._tick)
+        self.timer.start()
+
+        # 默认开始播放
+        self.is_playing = True
+        self.btn_pause.label.set_text("暂停")
+
         plt.show()
 
 
