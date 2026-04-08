@@ -50,25 +50,23 @@ def apply_signal_processing(
     return disp_processed, force_processed
 
 
-class SignalViewer:
-    """动态滑窗信号可视化器。"""
+class ForceDisplacementViewer:
+    """力-位移曲线动态可视化器。"""
 
     def __init__(
         self,
-        time: np.ndarray,
         disp: np.ndarray,
         force: np.ndarray,
         col_names: list[str],
         filename: str,
         window_size: int = WINDOW_SIZE,
     ) -> None:
-        self.time = time
         self.disp = disp
         self.force = force
         self.col_names = col_names
         self.filename = filename
         self.window_size = window_size
-        self.total_points = len(time)
+        self.total_points = len(disp)
         self.is_playing = True
 
         self._build_ui()
@@ -76,23 +74,17 @@ class SignalViewer:
     # ---- UI 构建 ----
 
     def _build_ui(self) -> None:
-        self.fig, (self.ax1, self.ax2) = plt.subplots(
-            2, 1, figsize=(12, 10), height_ratios=[1, 1]
+        self.fig, self.ax = plt.subplots(figsize=(10, 8))
+        self.fig.subplots_adjust(bottom=0.25)
+
+        (self.line,) = self.ax.plot([], [], "b-", linewidth=1.5, marker="o", markersize=3)
+
+        self.ax.set_xlabel(f"{self.col_names[1]} (位移)", fontsize=13)
+        self.ax.set_ylabel(f"{self.col_names[2]} (力)", fontsize=13)
+        self.ax.set_title(
+            f"力-位移曲线: {self.filename} (窗口大小: {self.window_size})", fontsize=14
         )
-        self.fig.subplots_adjust(bottom=0.25, hspace=0.35)
-
-        (self.line1,) = self.ax1.plot([], [], "b-", linewidth=1.5, marker="o", markersize=3)
-        (self.line2,) = self.ax2.plot([], [], "r-", linewidth=1.5, marker="o", markersize=3)
-
-        self.ax1.set_ylabel(self.col_names[1], fontsize=12)
-        self.ax1.set_title(
-            f"动态加载: {self.filename} (窗口大小: {self.window_size})", fontsize=14
-        )
-        self.ax1.grid(True, alpha=0.3)
-
-        self.ax2.set_ylabel(self.col_names[2], fontsize=12)
-        self.ax2.set_xlabel(self.col_names[0], fontsize=12)
-        self.ax2.grid(True, alpha=0.3)
+        self.ax.grid(True, alpha=0.3)
 
         # 速度滑块
         ax_speed = self.fig.add_axes([0.15, 0.10, 0.5, 0.03])
@@ -119,37 +111,35 @@ class SignalViewer:
 
     def _update(self, frame: int) -> tuple:
         if not self.is_playing:
-            return self.line1, self.line2
+            return (self.line,)
 
         end_idx = min(frame, self.total_points)
         start_idx = max(0, end_idx - self.window_size)
 
-        x = self.time[start_idx:end_idx]
-        y1 = self.disp[start_idx:end_idx]
-        y2 = self.force[start_idx:end_idx]
+        x = self.disp[start_idx:end_idx]
+        y = self.force[start_idx:end_idx]
 
-        self.line1.set_data(x, y1)
-        self.line2.set_data(x, y2)
+        self.line.set_data(x, y)
 
         if len(x) > 0:
-            self._rescale_axis(self.ax1, x, y1)
-            self._rescale_axis(self.ax2, x, y2)
+            self._rescale_axis(x, y)
 
-        self.ax1.set_title(
-            f"动态加载: {self.filename} - 已加载: {end_idx}/{self.total_points} 点",
+        self.ax.set_title(
+            f"力-位移曲线: {self.filename} - 已加载: {end_idx}/{self.total_points} 点",
             fontsize=14,
         )
-        return self.line1, self.line2
+        return (self.line,)
 
-    @staticmethod
-    def _rescale_axis(ax: plt.Axes, x: np.ndarray, y: np.ndarray, pad_ratio: float = 0.1) -> None:
+    def _rescale_axis(self, x: np.ndarray, y: np.ndarray, pad_ratio: float = 0.1) -> None:
         x_lo, x_hi = x.min(), x.max()
         if x_lo == x_hi:
             x_lo, x_hi = x_lo - 0.5, x_hi + 0.5
-        ax.set_xlim(x_lo, x_hi)
+        pad_x = (x_hi - x_lo) * pad_ratio if x_hi > x_lo else pad_ratio
+        self.ax.set_xlim(x_lo - pad_x, x_hi + pad_x)
+
         y_lo, y_hi = y.min(), y.max()
-        pad = (y_hi - y_lo) * pad_ratio if y_hi > y_lo else pad_ratio
-        ax.set_ylim(y_lo - pad, y_hi + pad)
+        pad_y = (y_hi - y_lo) * pad_ratio if y_hi > y_lo else pad_ratio
+        self.ax.set_ylim(y_lo - pad_y, y_hi + pad_y)
 
     def run(self) -> None:
         """启动动画并显示窗口。"""
@@ -183,7 +173,7 @@ def main() -> None:
     # 应用信号处理
     disp, force = apply_signal_processing(disp, force, time, fs)
 
-    viewer = SignalViewer(time, disp, force, col_names, filename=filepath)
+    viewer = ForceDisplacementViewer(disp, force, col_names, filename=filepath)
     viewer.run()
 
 
