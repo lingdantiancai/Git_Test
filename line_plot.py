@@ -69,6 +69,10 @@ class ForceDisplacementViewer:
         self.total_points = len(disp)
         self.is_playing = True
 
+        # 固定坐标轴范围（基于完整数据）
+        self.x_min, self.x_max = disp.min(), disp.max()
+        self.y_min, self.y_max = force.min(), force.max()
+
         self._build_ui()
 
     # ---- UI 构建 ----
@@ -85,6 +89,12 @@ class ForceDisplacementViewer:
             f"力-位移曲线: {self.filename} (窗口大小: {self.window_size})", fontsize=14
         )
         self.ax.grid(True, alpha=0.3)
+
+        # 固定坐标轴范围
+        pad_x = (self.x_max - self.x_min) * 0.05 if self.x_max > self.x_min else 0.5
+        pad_y = (self.y_max - self.y_min) * 0.05 if self.y_max > self.y_min else 0.5
+        self.ax.set_xlim(self.x_min - pad_x, self.x_max + pad_x)
+        self.ax.set_ylim(self.y_min - pad_y, self.y_max + pad_y)
 
         # 速度滑块
         ax_speed = self.fig.add_axes([0.15, 0.10, 0.5, 0.03])
@@ -121,25 +131,11 @@ class ForceDisplacementViewer:
 
         self.line.set_data(x, y)
 
-        if len(x) > 0:
-            self._rescale_axis(x, y)
-
         self.ax.set_title(
             f"力-位移曲线: {self.filename} - 已加载: {end_idx}/{self.total_points} 点",
             fontsize=14,
         )
         return (self.line,)
-
-    def _rescale_axis(self, x: np.ndarray, y: np.ndarray, pad_ratio: float = 0.1) -> None:
-        x_lo, x_hi = x.min(), x.max()
-        if x_lo == x_hi:
-            x_lo, x_hi = x_lo - 0.5, x_hi + 0.5
-        pad_x = (x_hi - x_lo) * pad_ratio if x_hi > x_lo else pad_ratio
-        self.ax.set_xlim(x_lo - pad_x, x_hi + pad_x)
-
-        y_lo, y_hi = y.min(), y.max()
-        pad_y = (y_hi - y_lo) * pad_ratio if y_hi > y_lo else pad_ratio
-        self.ax.set_ylim(y_lo - pad_y, y_hi + pad_y)
 
     def run(self) -> None:
         """启动动画并显示窗口。"""
