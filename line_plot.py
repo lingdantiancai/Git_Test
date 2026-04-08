@@ -124,10 +124,10 @@ class ForceDisplacementViewer:
             return (self.line,)
 
         end_idx = frame + 1
-        start_idx = max(0, end_idx - self.window_size)
 
-        x = self.disp[start_idx:end_idx]
-        y = self.force[start_idx:end_idx]
+        # 从起点绘制到当前帧，逐步画出完整曲线
+        x = self.disp[:end_idx]
+        y = self.force[:end_idx]
 
         self.line.set_data(x, y)
 
