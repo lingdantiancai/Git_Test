@@ -143,7 +143,10 @@ class SignalViewer:
 
     @staticmethod
     def _rescale_axis(ax: plt.Axes, x: np.ndarray, y: np.ndarray, pad_ratio: float = 0.1) -> None:
-        ax.set_xlim(x.min(), x.max())
+        x_lo, x_hi = x.min(), x.max()
+        if x_lo == x_hi:
+            x_lo, x_hi = x_lo - 0.5, x_hi + 0.5
+        ax.set_xlim(x_lo, x_hi)
         y_lo, y_hi = y.min(), y.max()
         pad = (y_hi - y_lo) * pad_ratio if y_hi > y_lo else pad_ratio
         ax.set_ylim(y_lo - pad, y_hi + pad)
