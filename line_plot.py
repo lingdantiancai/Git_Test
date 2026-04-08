@@ -113,7 +113,7 @@ class ForceDisplacementViewer:
         if not self.is_playing:
             return (self.line,)
 
-        end_idx = min(frame, self.total_points)
+        end_idx = frame + 1
         start_idx = max(0, end_idx - self.window_size)
 
         x = self.disp[start_idx:end_idx]
@@ -146,10 +146,11 @@ class ForceDisplacementViewer:
         self.ani = FuncAnimation(
             self.fig,
             self._update,
-            frames=range(1, self.total_points + 1),
+            frames=self.total_points,
             interval=self._get_interval(),
             blit=False,
             repeat=False,
+            cache_frame_data=False,
         )
         self.slider_speed.on_changed(
             lambda _val: setattr(self.ani.event_source, "interval", self._get_interval())
