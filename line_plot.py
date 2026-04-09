@@ -18,8 +18,16 @@ from matplotlib.widgets import Button, Slider
 
 from agent_b_signal import process_signal
 
-# ---------- 常量 ----------
+# ---------- 配置 ----------
 DEFAULT_SPEED = 30  # 点/秒
+
+# 信号处理配置
+SIGNAL_PROCESSING_CONFIG = {
+    "lowpass_cutoff_ratio": 0.05,  # fs * 0.05 = fs/20
+    "outlier_method": "iqr",      # "iqr", "zscore", "hampel"
+    "skip_outliers": False,
+    "skip_lowpass": False,
+}
 
 
 def load_csv(filepath: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, list[str]]:
@@ -43,8 +51,31 @@ def apply_signal_processing(
     """对位移和力数据应用信号处理管线。"""
     disp_series = pd.Series(disp, name="Displacement")
     force_series = pd.Series(force, name="Force")
-    disp_processed = process_signal(disp_series, fs=fs, lowpass_cutoff=fs / 20).values
-    force_processed = process_signal(force_series, fs=fs, lowpass_cutoff=fs / 20).values
+
+    # 使用配置参数
+    lowpass_cutoff = fs * SIGNAL_PROCESSING_CONFIG["lowpass_cutoff_ratio"]
+    outlier_method = SIGNAL_PROCESSING_CONFIG["outlier_method"]
+    skip_outliers = SIGNAL_PROCESSING_CONFIG["skip_outliers"]
+    skip_lowpass = SIGNAL_PROCESSING_CONFIG["skip_lowpass"]
+
+    disp_processed = process_signal(
+        disp_series,
+        fs=fs,
+        lowpass_cutoff=lowpass_cutoff,
+        outlier_method=outlier_method,
+        skip_outliers=skip_outliers,
+        skip_lowpass=skip_lowpass,
+    ).values
+
+    force_processed = process_signal(
+        force_series,
+        fs=fs,
+        lowpass_cutoff=lowpass_cutoff,
+        outlier_method=outlier_method,
+        skip_outliers=skip_outliers,
+        skip_lowpass=skip_lowpass,
+    ).values
+
     return disp_processed, force_processed
 
 
@@ -66,6 +97,7 @@ class ForceDisplacementViewer:
         self.current_idx = 0
         self.is_playing = False
         self.speed = DEFAULT_SPEED  # 点/秒
+        self.accumulated_error = 0.0  # 累积误差，用于精确速度控制
 
         # 固定坐标轴范围（基于完整数据）
         self.x_min, self.x_max = disp.min(), disp.max()
@@ -110,6 +142,7 @@ class ForceDisplacementViewer:
         if not self.is_playing and self.current_idx >= self.total_points:
             # 播放完毕后点击，从头开始
             self.current_idx = 0
+            self.accumulated_error = 0.0  # 重置累积误差
         self.is_playing = not self.is_playing
         self.btn_pause.label.set_text("暂停" if self.is_playing else "继续")
         self.fig.canvas.draw_idle()
@@ -128,8 +161,26 @@ class ForceDisplacementViewer:
                 self.fig.canvas.draw_idle()
             return
 
-        # 每帧推进的步数 = 速度(点/秒) / 定时器频率(帧/秒)
-        steps = max(1, round(self.speed / self.timer_interval_hz))
+        # 精确速度控制：使用累积误差补偿
+        # 每帧理论推进点数 = 速度(点/秒) / 定时器频率(帧/秒)
+        target_increment = self.speed / self.timer_interval_hz
+
+        # 加上累积误差
+        total_increment = target_increment + self.accumulated_error
+
+        # 整数部分作为实际推进步数，小数部分作为新的累积误差
+        steps = int(total_increment)
+        self.accumulated_error = total_increment - steps
+
+        # 至少推进1点（除非速度为0，但速度滑块最小为1）
+        if steps < 1 and self.speed > 0:
+            # 如果累积误差足够大，推进1点并减少累积误差
+            if self.accumulated_error >= 1.0:
+                steps = 1
+                self.accumulated_error -= 1.0
+            else:
+                steps = 1  # 保证至少推进1点
+
         self.current_idx = min(self.current_idx + steps, self.total_points)
 
         x = self.disp[: self.current_idx]
@@ -151,9 +202,9 @@ class ForceDisplacementViewer:
         self.timer.add_callback(self._tick)
         self.timer.start()
 
-        # 默认开始播放
-        self.is_playing = True
-        self.btn_pause.label.set_text("暂停")
+        # 默认不自动播放，让用户先查看静态图像
+        self.is_playing = False
+        self.btn_pause.label.set_text("播放")
 
         plt.show()
 
@@ -164,15 +215,55 @@ def main() -> None:
         print("错误：当前目录没有找到 CSV 文件")
         sys.exit(1)
 
-    filepath = csv_files[0]
-    time, disp, force, col_names = load_csv(filepath)
+    # 多文件选择
+    if len(csv_files) > 1:
+        print(f"发现 {len(csv_files)} 个CSV文件:")
+        for i, f in enumerate(csv_files):
+            print(f"  [{i}] {f}")
+        try:
+            choice = input("请选择文件编号 (默认0): ").strip()
+            idx = int(choice) if choice else 0
+            if idx < 0 or idx >= len(csv_files):
+                print(f"错误：编号 {idx} 超出范围，使用默认文件 0")
+                idx = 0
+            filepath = csv_files[idx]
+        except (ValueError, KeyboardInterrupt):
+            print("输入无效，使用默认文件 0")
+            filepath = csv_files[0]
+    else:
+        filepath = csv_files[0]
+
+    print(f"正在处理文件: {filepath}")
+
+    try:
+        time, disp, force, col_names = load_csv(filepath)
+    except Exception as e:
+        print(f"读取CSV文件失败: {e}")
+        sys.exit(1)
+
+    if len(time) < 2:
+        print("错误：数据点太少，无法计算采样率")
+        sys.exit(1)
 
     # 估算采样率
-    dt = np.median(np.diff(time))
-    fs = 1.0 / dt if dt > 0 else 1.0
+    try:
+        dt = np.median(np.diff(time))
+        fs = 1.0 / dt if dt > 0 else 1.0
+    except Exception as e:
+        print(f"计算采样率失败: {e}")
+        fs = 1.0  # 默认采样率
+
+    if fs <= 0 or fs > 1e6:  # 合理性检查
+        print(f"警告：采样率 {fs:.2f} Hz 似乎不合理，使用默认值 1.0 Hz")
+        fs = 1.0
 
     # 应用信号处理
-    disp, force = apply_signal_processing(disp, force, time, fs)
+    try:
+        disp, force = apply_signal_processing(disp, force, time, fs)
+    except Exception as e:
+        print(f"信号处理失败: {e}")
+        print("使用原始数据继续...")
+        # 使用原始数据继续
 
     viewer = ForceDisplacementViewer(disp, force, col_names, filename=filepath)
     viewer.run()

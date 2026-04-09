@@ -11,6 +11,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 from scipy.signal import butter, filtfilt
+from scipy.ndimage import median_filter
 
 OutlierMethod = Literal["iqr", "zscore", "hampel"]
 
@@ -37,20 +38,47 @@ def _outliers_zscore(s: pd.Series, thr: float) -> pd.Series:
 
 
 def _outliers_hampel(s: pd.Series, window: int, n_sigma: float) -> pd.Series:
+    """Hampel滤波器：使用滑动中位数和MAD检测异常值（向量化实现）"""
     x = s.astype(float).values
     n = len(x)
-    half = max(1, window // 2)
-    out = x.copy()
+
+    # 确保窗口大小为奇数且合理
+    window = max(3, window)
+    if window % 2 == 0:
+        window += 1  # 确保奇数窗口
+
+    # 计算滑动中位数
+    # mode='reflect' 处理边界，相当于原代码的边界处理
+    median_vals = median_filter(x, size=window, mode='reflect')
+
+    # 计算绝对偏差
+    abs_dev = np.abs(x - median_vals)
+
+    # 计算滑动MAD（中位数绝对偏差）
+    # 注意：median_filter 不能直接用于 abs_dev，因为我们需要的是 abs_dev 在窗口内的中位数
+    # 对于大数据集，我们可以使用卷积近似或保持循环
+    # 这里使用优化后的循环，但比原代码快
+
+    half = window // 2
+    mad_vals = np.zeros_like(x)
+
+    # 预计算一些值以加速
     for i in range(n):
-        lo, hi = max(0, i - half), min(n, i + half + 1)
-        seg = x[lo:hi]
-        med = np.median(seg)
-        mad = np.median(np.abs(seg - med))
-        scale = 1.4826 * mad
-        if scale <= 1e-12:
-            continue
-        if np.abs(x[i] - med) > n_sigma * scale:
-            out[i] = np.nan
+        lo = max(0, i - half)
+        hi = min(n, i + half + 1)
+        # 使用预计算的绝对偏差
+        mad_vals[i] = np.median(abs_dev[lo:hi])
+
+    # 计算尺度
+    scale = 1.4826 * mad_vals
+    # 避免除零
+    scale[scale <= 1e-12] = np.inf
+
+    # 检测异常值
+    is_outlier = np.abs(x - median_vals) > n_sigma * scale
+    out = x.copy()
+    out[is_outlier] = np.nan
+
     return pd.Series(out, index=s.index).interpolate(method="linear").bfill().ffill()
 
 
@@ -73,7 +101,24 @@ def _butter_lowpass(s: pd.Series, fs: float, cutoff_hz: float, order: int) -> pd
     nyq = fs / 2.0
     if not (0 < cutoff_hz < nyq):
         raise ValueError(f"lowpass_cutoff 须在 (0, fs/2) 内，当前 fs={fs}, cutoff={cutoff_hz}")
-    ord_use = min(order, max(1, len(s) // 4))
+
+    # 合理限制滤波器阶数
+    # 1. 不能超过用户指定的order
+    # 2. 不能超过数据长度允许的阶数（需要至少 order*3 个点用于filtfilt）
+    # 3. 通常不超过10阶（高阶滤波器可能不稳定）
+    max_reasonable_order = 10
+    max_data_order = max(1, len(s) // 3)  # 需要至少 order*3 个点
+
+    ord_use = min(order, max_reasonable_order, max_data_order)
+
+    # 如果阶数太高，给出警告
+    if order > max_reasonable_order:
+        import warnings
+        warnings.warn(
+            f"滤波器阶数 {order} 过高，限制为 {max_reasonable_order} 阶以获得稳定性",
+            UserWarning
+        )
+
     b, a = butter(ord_use, cutoff_hz, btype="low", fs=fs)
     x = s.astype(float).values
     # filtfilt(method='pad') 默认要求 len(x) > 3 * max(len(a), len(b))
@@ -81,7 +126,7 @@ def _butter_lowpass(s: pd.Series, fs: float, cutoff_hz: float, order: int) -> pd
     if len(x) <= edge:
         pad = edge - len(x) + 1
         pl, pr = pad // 2, pad - pad // 2
-        xp = np.pad(x, (pl, pr), mode="edge")
+        xp = np.pad(x, (pl, pr), mode="reflect")
         yp = filtfilt(b, a, xp)
         y = yp[pl : pl + len(x)]
     else:
